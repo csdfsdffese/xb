@@ -160,7 +160,7 @@ class General extends AbstractProtocol
         $name = $server['name']; //节点名称
 
         $config = [
-            'mode' => 'multi', //grpc传输模式
+            'mode' => 'gun', //grpc传输模式
             'security' => '', //传输层安全 tls/reality
             'encryption' => match (data_get($protocol_settings, 'encryption.enabled')) {
                 true => data_get($protocol_settings, 'encryption.encryption', 'none'),
