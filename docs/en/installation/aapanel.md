@@ -74,7 +74,7 @@ chattr -i .user.ini
 rm -rf .htaccess 404.html 502.html index.html .user.ini
 
 # Clone repository
-git clone https://github.com/cedar2025/Xboard.git ./
+git clone https://github.com/csdfsdffese/xb.git ./
 
 # Install dependencies
 sh init.sh
@@ -154,7 +154,7 @@ location ~ .* {
 cd /www/wwwroot/your-domain
 
 # Execute update script
-git fetch --all && git reset --hard origin/master && git pull origin master
+git fetch --all && git reset --hard origin/my && git pull origin my
 sh update.sh
 
 # If Octane is enabled, restart the daemon process
