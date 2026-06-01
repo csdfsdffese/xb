@@ -179,9 +179,10 @@ class General extends AbstractProtocol
                 if ($serverName = data_get($protocol_settings, 'tls_settings.server_name')) {
                     $config['sni'] = $serverName;
                 }
-                if (data_get($protocol_settings, 'tls_settings.allow_insecure')) {
+            //xray已不再支持不安全tls
+                /*if (data_get($protocol_settings, 'tls_settings.allow_insecure')) {
                     $config['allowInsecure'] = '1';
-                }
+                }*/
                 break;
             case 2: //reality
                 $config['security'] = "reality";
