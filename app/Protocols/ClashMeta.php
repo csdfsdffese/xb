@@ -491,13 +491,118 @@ class ClashMeta extends AbstractProtocol
                 break;
             case 'xhttp':
                 $array['network'] = 'xhttp';
+                $ns = data_get($protocol_settings, 'network_settings', []);
+                $extra = data_get($ns, 'extra', []);
                 $xhttpOpts = [];
-                if ($path = data_get($protocol_settings, 'network_settings.path'))
+
+                if ($path = data_get($ns, 'path'))
                     $xhttpOpts['path'] = $path;
-                if ($host = data_get($protocol_settings, 'network_settings.host'))
+                if ($host = data_get($ns, 'host'))
                     $xhttpOpts['host'] = $host;
-                if ($mode = data_get($protocol_settings, 'network_settings.mode'))
+                if ($mode = data_get($ns, 'mode'))
                     $xhttpOpts['mode'] = $mode;
+                if ($headers = data_get($ns, 'headers'))
+                    $xhttpOpts['headers'] = $headers;
+
+                if (($v = data_get($extra, 'noGRPCHeader')) !== null)
+                    $xhttpOpts['no-grpc-header'] = (bool) $v;
+                if ($v = data_get($extra, 'xPaddingBytes'))
+                    $xhttpOpts['x-padding-bytes'] = $v;
+                if (($v = data_get($extra, 'xPaddingObfsMode')) !== null)
+                    $xhttpOpts['x-padding-obfs-mode'] = (bool) $v;
+                if ($v = data_get($extra, 'xPaddingKey'))
+                    $xhttpOpts['x-padding-key'] = $v;
+                if ($v = data_get($extra, 'xPaddingHeader'))
+                    $xhttpOpts['x-padding-header'] = $v;
+                if ($v = data_get($extra, 'xPaddingPlacement'))
+                    $xhttpOpts['x-padding-placement'] = $v;
+                if ($v = data_get($extra, 'xPaddingMethod'))
+                    $xhttpOpts['x-padding-method'] = $v;
+                if ($v = data_get($extra, 'uplinkHttpMethod'))
+                    $xhttpOpts['uplink-http-method'] = $v;
+                if ($v = data_get($extra, 'sessionPlacement'))
+                    $xhttpOpts['session-placement'] = $v;
+                if ($v = data_get($extra, 'sessionKey'))
+                    $xhttpOpts['session-key'] = $v;
+                if ($v = data_get($extra, 'seqPlacement'))
+                    $xhttpOpts['seq-placement'] = $v;
+                if ($v = data_get($extra, 'seqKey'))
+                    $xhttpOpts['seq-key'] = $v;
+                if ($v = data_get($extra, 'uplinkDataPlacement'))
+                    $xhttpOpts['uplink-data-placement'] = $v;
+                if ($v = data_get($extra, 'uplinkDataKey'))
+                    $xhttpOpts['uplink-data-key'] = $v;
+                if (($v = data_get($extra, 'uplinkChunkSize')) !== null)
+                    $xhttpOpts['uplink-chunk-size'] = (int) $v;
+
+                if (($v = data_get($extra, 'scMaxEachPostBytes')) !== null)
+                    $xhttpOpts['sc-max-each-post-bytes'] = is_string($v) ? $v : (int) $v;
+                if (($v = data_get($extra, 'scMinPostsIntervalMs')) !== null)
+                    $xhttpOpts['sc-min-posts-interval-ms'] = is_string($v) ? $v : (int) $v;
+
+                $reuseSettings = [];
+                if (($v = data_get($extra, 'maxConcurrency')) !== null)
+                    $reuseSettings['max-concurrency'] = $v;
+                if (($v = data_get($extra, 'maxConnections')) !== null)
+                    $reuseSettings['max-connections'] = $v;
+                if (($v = data_get($extra, 'cMaxReuseTimes')) !== null)
+                    $reuseSettings['c-max-reuse-times'] = $v;
+                if (($v = data_get($extra, 'hMaxRequestTimes')) !== null)
+                    $reuseSettings['h-max-request-times'] = $v;
+                if (($v = data_get($extra, 'hMaxReusableSecs')) !== null)
+                    $reuseSettings['h-max-reusable-secs'] = $v;
+                if (($v = data_get($extra, 'hKeepAlivePeriod')) !== null)
+                    $reuseSettings['h-keep-alive-period'] = (int) $v;
+                if (!empty($reuseSettings))
+                    $xhttpOpts['reuse-settings'] = $reuseSettings;
+
+                if ($dlSettings = data_get($extra, 'downloadSettings')) {
+                    $dlOpts = [];
+                    if ($v = data_get($dlSettings, 'path'))
+                        $dlOpts['path'] = $v;
+                    if ($v = data_get($dlSettings, 'host'))
+                        $dlOpts['host'] = $v;
+                    if ($v = data_get($dlSettings, 'headers'))
+                        $dlOpts['headers'] = $v;
+                    $dlReuse = [];
+                    if (($v = data_get($dlSettings, 'maxConcurrency')) !== null)
+                        $dlReuse['max-concurrency'] = $v;
+                    if (($v = data_get($dlSettings, 'maxConnections')) !== null)
+                        $dlReuse['max-connections'] = $v;
+                    if (($v = data_get($dlSettings, 'cMaxReuseTimes')) !== null)
+                        $dlReuse['c-max-reuse-times'] = $v;
+                    if (($v = data_get($dlSettings, 'hMaxRequestTimes')) !== null)
+                        $dlReuse['h-max-request-times'] = $v;
+                    if (($v = data_get($dlSettings, 'hMaxReusableSecs')) !== null)
+                        $dlReuse['h-max-reusable-secs'] = $v;
+                    if (($v = data_get($dlSettings, 'hKeepAlivePeriod')) !== null)
+                        $dlReuse['h-keep-alive-period'] = (int) $v;
+                    if (!empty($dlReuse))
+                        $dlOpts['reuse-settings'] = $dlReuse;
+                    if ($v = data_get($dlSettings, 'server'))
+                        $dlOpts['server'] = $v;
+                    if (($v = data_get($dlSettings, 'port')) !== null)
+                        $dlOpts['port'] = (int) $v;
+                    if (($v = data_get($dlSettings, 'tls')) !== null)
+                        $dlOpts['tls'] = (bool) $v;
+                    if ($v = data_get($dlSettings, 'alpn'))
+                        $dlOpts['alpn'] = $v;
+                    if ($v = data_get($dlSettings, 'servername'))
+                        $dlOpts['servername'] = $v;
+                    if (($v = data_get($dlSettings, 'skip-cert-verify')) !== null)
+                        $dlOpts['skip-cert-verify'] = (bool) $v;
+                    if ($v = data_get($dlSettings, 'fingerprint'))
+                        $dlOpts['fingerprint'] = $v;
+                    if ($v = data_get($dlSettings, 'client-fingerprint'))
+                        $dlOpts['client-fingerprint'] = $v;
+                    if ($v = data_get($dlSettings, 'reality-opts'))
+                        $dlOpts['reality-opts'] = $v;
+                    if ($v = data_get($dlSettings, 'ech-opts'))
+                        $dlOpts['ech-opts'] = $v;
+                    if (!empty($dlOpts))
+                        $xhttpOpts['download-settings'] = $dlOpts;
+                }
+
                 if (!empty($xhttpOpts))
                     $array['xhttp-opts'] = $xhttpOpts;
                 break;
