@@ -264,14 +264,83 @@ class Shadowrocket extends AbstractProtocol
                 break;
             case 'xhttp':
                 $config['obfs'] = "xhttp";
+                $host = data_get($protocol_settings, 'network_settings.host', $server['host']);
                 if ($path = data_get($protocol_settings, 'network_settings.path')) {
                     $config['path'] = $path;
                 }
-                if ($host = data_get($protocol_settings, 'network_settings.host', $server['host'])) {
-                    $config['obfsParam'] = $host;
-                }
                 if ($mode = data_get($protocol_settings, 'network_settings.mode', 'auto')) {
                     $config['mode'] = $mode;
+                }
+                
+                // 处理 xhttp 参数
+                $extra = data_get($protocol_settings, 'network_settings.extra');
+                if (is_array($extra)) {
+                    $inner = [];
+
+                    // 1. xmux 参数
+                    if (!empty($extra['xmux'])) {
+                        $xmux = $extra['xmux'];
+                        if (isset($xmux['maxConcurrency'])) {
+                            $inner['maxConcurrency'] = (string)$xmux['maxConcurrency'];
+                        }
+                        if (isset($xmux['maxConnections'])) {
+                            $val = $xmux['maxConnections'];
+                            $inner['maxConnections'] = is_string($val) ? $val : "{$val}-{$val}";
+                        }
+                        if (isset($xmux['cMaxReuseTimes'])) {
+                            $val = $xmux['cMaxReuseTimes'];
+                            $inner['cMaxReuseTimes'] = is_string($val) ? $val : "{$val}-{$val}";
+                        }
+                        if (isset($xmux['hMaxRequestTimes'])) {
+                            $inner['hMaxRequestTimes'] = (string)$xmux['hMaxRequestTimes'];
+                        }
+                        if (isset($xmux['hMaxReusableSecs'])) {
+                            $inner['hMaxReusableSecs'] = (string)$xmux['hMaxReusableSecs'];
+                        }
+                        if (isset($xmux['hKeepAlivePeriod'])) {
+                            $inner['hKeepAlivePeriod'] = (string)$xmux['hKeepAlivePeriod'];
+                        }
+                    }
+
+                    // 2. XPadding 参数
+                    $inner['noGRPCHeader'] = isset($extra['noGRPCHeader']) ? (bool)$extra['noGRPCHeader'] : false;
+                    $inner['xPaddingBytes'] = $extra['xPaddingBytes'] ?? '100-1000';
+                    $inner['xPaddingObfsMode'] = isset($extra['xPaddingObfsMode']) ? (bool)$extra['xPaddingObfsMode'] : false;
+                    $inner['xPaddingKey'] = $extra['xPaddingKey'] ?? 'x_padding';
+                    $inner['xPaddingHeader'] = $extra['xPaddingHeader'] ?? 'Referer';
+                    $inner['xPaddingPlacement'] = $extra['xPaddingPlacement'] ?? 'queryInHeader';
+                    $inner['xPaddingMethod'] = $extra['xPaddingMethod'] ?? 'repeat-x';
+
+                    // 3. 上行参数
+                    $inner['uplinkHTTPMethod'] = $extra['uplinkHTTPMethod'] ?? 'POST';
+                    $inner['uplinkDataPlacement'] = $extra['uplinkDataPlacement'] ?? 'body';
+                    $inner['uplinkDataKey'] = $extra['uplinkDataKey'] ?? '';
+                    $inner['uplinkChunkSize'] = isset($extra['uplinkChunkSize']) ? (string)$extra['uplinkChunkSize'] : '0';
+
+                    // 4. 会话参数
+                    $inner['sessionPlacement'] = $extra['sessionPlacement'] ?? 'path';
+                    $inner['sessionKey'] = $extra['sessionKey'] ?? '';
+                    $inner['seqPlacement'] = $extra['seqPlacement'] ?? 'path';
+                    $inner['seqKey'] = $extra['seqKey'] ?? '';
+
+                    // 5. packet-up 参数
+                    $inner['scMaxEachPostBytes'] = isset($extra['scMaxEachPostBytes']) ? (string)$extra['scMaxEachPostBytes'] : '1000000';
+                    $inner['scMinPostsIntervalMs'] = isset($extra['scMinPostsIntervalMs']) ? (string)$extra['scMinPostsIntervalMs'] : '30';
+
+                    // 6. 下行分离参数
+                    if (!empty($extra['downloadSettings'])) {
+                        $ds = $extra['downloadSettings'];
+                        $inner['downloadTargetHost'] = data_get($ds, 'address', '');
+                        $inner['downloadTargetPort'] = (string)data_get($ds, 'port', '443');
+                        $inner['downloadServerName'] = data_get($ds, 'realitySettings.serverName') ?? data_get($ds, 'tlsSettings.serverName', '');
+                        $inner['downloadHTTPHost'] = $inner['downloadServerName'];
+                    }
+
+                    // 7. 生成 obfsParam - 所有参数在 "" 嵌套里，Host 在外层
+                    $config['obfsParam'] = json_encode([
+                        'Host' => data_get($protocol_settings, 'tls_settings.server_name') ?? $host,
+                        '' => $inner
+                    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
                 }
                 break;
         }
