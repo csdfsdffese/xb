@@ -518,7 +518,7 @@ class ClashMeta extends AbstractProtocol
                     $xhttpOpts['x-padding-placement'] = $v;
                 if ($v = data_get($extra, 'xPaddingMethod'))
                     $xhttpOpts['x-padding-method'] = $v;
-                if ($v = data_get($extra, 'uplinkHttpMethod'))
+                if ($v = data_get($extra, 'uplinkHTTPMethod'))
                     $xhttpOpts['uplink-http-method'] = $v;
                 if ($v = data_get($extra, 'sessionPlacement'))
                     $xhttpOpts['session-placement'] = $v;
