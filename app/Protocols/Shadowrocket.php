@@ -271,7 +271,12 @@ class Shadowrocket extends AbstractProtocol
                 if ($mode = data_get($protocol_settings, 'network_settings.mode', 'auto')) {
                     $config['mode'] = $mode;
                 }
-                
+
+                // xhttp 支持 VLESS 加密（enc），对应 Shadowrocket 的 method 字段
+                if (data_get($protocol_settings, 'encryption.enabled')) {
+                    $config['encryption'] = data_get($protocol_settings, 'encryption.encryption', 'none');
+                }
+            
                 // 处理 xhttp 参数
                 $extra = data_get($protocol_settings, 'network_settings.extra');
                 if (is_array($extra)) {
