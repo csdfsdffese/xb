@@ -173,7 +173,17 @@ class Shadowrocket extends AbstractProtocol
     public static function buildVless($uuid, $server)
     {
         $protocol_settings = $server['protocol_settings'];
-        $userinfo = base64_encode('auto:' . $uuid . '@' . Helper::wrapIPv6($server['host']) . ':' . $server['port']);
+
+        // xhttp 节点开启加密时：明文 userinfo + type=xhttp + encryption 下发 enc（Shadowrocket 明文格式靠 type 识别 xhttp 传输并读取 encryption），
+        // 同时保留私有 obfs/obfsParam 等参数，保证 xhttp 高级参数（下载分离等）不丢失。
+        $enc = null;
+        if (data_get($protocol_settings, 'network') === 'xhttp'
+            && data_get($protocol_settings, 'encryption.enabled')
+            && ($enc = data_get($protocol_settings, 'encryption.encryption'))) {
+            $userinfo = $uuid . '@' . Helper::wrapIPv6($server['host']) . ':' . $server['port'];
+        } else {
+            $userinfo = base64_encode('auto:' . $uuid . '@' . Helper::wrapIPv6($server['host']) . ':' . $server['port']);
+        }
         $config = [
             'tfo' => 1,
             'remark' => $server['name'],
@@ -264,6 +274,11 @@ class Shadowrocket extends AbstractProtocol
                 break;
             case 'xhttp':
                 $config['obfs'] = "xhttp";
+                // 明文格式下 Shadowrocket 依赖 type 识别 xhttp 传输，encryption 才会被读取为 enc
+                if ($enc !== null) {
+                    $config['type'] = 'xhttp';
+                    $config['encryption'] = $enc;
+                }
                 $host = data_get($protocol_settings, 'network_settings.host', $server['host']);
                 if ($path = data_get($protocol_settings, 'network_settings.path')) {
                     $config['path'] = $path;
