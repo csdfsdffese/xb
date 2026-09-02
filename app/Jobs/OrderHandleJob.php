@@ -36,7 +36,9 @@ class OrderHandleJob implements ShouldQueue
      */
     public function handle()
     {
-        $order = Order::where('trade_no', $this->tradeNo)->first();
+        $order = Order::where('trade_no', $this->tradeNo)
+            ->lockForUpdate()
+            ->first();
         if (!$order) return;
         $orderService = new OrderService($order);
         switch ($order->status) {

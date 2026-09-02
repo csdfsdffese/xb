@@ -79,7 +79,10 @@ class ServerService
             return $server;
         })->toArray();
 
-        return $servers;
+        // 查询层统一出口钩子（仅此一处核心改动，供插件在数据源层面拦截）：
+        // 覆盖订阅下发、用户节点列表、客户端 App 配置等所有面向用户的服务器数据。
+        // 后端节点配置推送（UniProxy/TrojanTidalab 等）不经过本方法，不受影响。
+        return HookManager::filter('server.available.get', $servers, $user);
     }
 
     /**

@@ -160,7 +160,7 @@ class General extends AbstractProtocol
         $name = $server['name']; //节点名称
 
         $config = [
-            'mode' => 'multi', //grpc传输模式
+            'mode' => 'gun', //grpc传输模式
             'security' => '', //传输层安全 tls/reality
             'encryption' => match (data_get($protocol_settings, 'encryption.enabled')) {
                 true => data_get($protocol_settings, 'encryption.encryption', 'none'),
@@ -179,9 +179,10 @@ class General extends AbstractProtocol
                 if ($serverName = data_get($protocol_settings, 'tls_settings.server_name')) {
                     $config['sni'] = $serverName;
                 }
-                if (data_get($protocol_settings, 'tls_settings.allow_insecure')) {
+            //xray已不再支持不安全tls
+                /*if (data_get($protocol_settings, 'tls_settings.allow_insecure')) {
                     $config['allowInsecure'] = '1';
-                }
+                }*/
                 break;
             case 2: //reality
                 $config['security'] = "reality";
