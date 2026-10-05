@@ -224,7 +224,7 @@ class ClashMeta extends AbstractProtocol
         $config['proxy-groups'] = array_values($config['proxy-groups']);
         $config = $this->buildRules($config);
 
-        $yaml = Yaml::dump($config, 2, 4, Yaml::DUMP_EMPTY_ARRAY_AS_SEQUENCE);
+        $yaml = Yaml::dump($config, 2, 4, Yaml::DUMP_EMPTY_ARRAY_AS_SEQUENCE | Yaml::DUMP_OBJECT_AS_MAP);
         $yaml = str_replace('$app_name', admin_setting('app_name', 'XBoard'), $yaml);
         return response($yaml)
             ->header('content-type', 'text/yaml')
@@ -491,155 +491,284 @@ class ClashMeta extends AbstractProtocol
                 break;
             case 'xhttp':
                 $array['network'] = 'xhttp';
-                $ns = data_get($protocol_settings, 'network_settings', []);
-                $extra = data_get($ns, 'extra', []);
-                $xhttpOpts = [];
-
-                if ($path = data_get($ns, 'path'))
-                    $xhttpOpts['path'] = $path;
-                if ($host = data_get($ns, 'host'))
-                    $xhttpOpts['host'] = $host;
-                if ($mode = data_get($ns, 'mode'))
-                    $xhttpOpts['mode'] = $mode;
-                if ($headers = data_get($extra, 'headers'))
-                    $xhttpOpts['headers'] = $headers;
-
-                if (($v = data_get($extra, 'noGRPCHeader')) !== null)
-                    $xhttpOpts['no-grpc-header'] = (bool) $v;
-                if ($v = data_get($extra, 'xPaddingBytes'))
-                    $xhttpOpts['x-padding-bytes'] = $v;
-                if (($v = data_get($extra, 'xPaddingObfsMode')) !== null)
-                    $xhttpOpts['x-padding-obfs-mode'] = (bool) $v;
-                if ($v = data_get($extra, 'xPaddingKey'))
-                    $xhttpOpts['x-padding-key'] = $v;
-                if ($v = data_get($extra, 'xPaddingHeader'))
-                    $xhttpOpts['x-padding-header'] = $v;
-                if ($v = data_get($extra, 'xPaddingPlacement'))
-                    $xhttpOpts['x-padding-placement'] = $v;
-                if ($v = data_get($extra, 'xPaddingMethod'))
-                    $xhttpOpts['x-padding-method'] = $v;
-                if ($v = data_get($extra, 'uplinkHTTPMethod'))
-                    $xhttpOpts['uplink-http-method'] = $v;
-                if ($v = data_get($extra, 'sessionPlacement'))
-                    $xhttpOpts['session-placement'] = $v;
-                if ($v = data_get($extra, 'sessionKey'))
-                    $xhttpOpts['session-key'] = $v;
-                if ($v = data_get($extra, 'seqPlacement'))
-                    $xhttpOpts['seq-placement'] = $v;
-                if ($v = data_get($extra, 'seqKey'))
-                    $xhttpOpts['seq-key'] = $v;
-                if ($v = data_get($extra, 'uplinkDataPlacement'))
-                    $xhttpOpts['uplink-data-placement'] = $v;
-                if ($v = data_get($extra, 'uplinkDataKey'))
-                    $xhttpOpts['uplink-data-key'] = $v;
-                if (($v = data_get($extra, 'uplinkChunkSize')) !== null)
-                    $xhttpOpts['uplink-chunk-size'] = (int) $v;
-
-                if (($v = data_get($extra, 'scMaxEachPostBytes')) !== null)
-                    $xhttpOpts['sc-max-each-post-bytes'] = is_string($v) ? $v : (int) $v;
-                if (($v = data_get($extra, 'scMinPostsIntervalMs')) !== null)
-                    $xhttpOpts['sc-min-posts-interval-ms'] = is_string($v) ? $v : (int) $v;
-
-                if ($xmux = data_get($extra, 'xmux')) {
-                    $reuseSettings = [];
-                    if (($v = data_get($xmux, 'maxConcurrency')) !== null)
-                        $reuseSettings['max-concurrency'] = $v;
-                    if (($v = data_get($xmux, 'maxConnections')) !== null)
-                        $reuseSettings['max-connections'] = $v;
-                    if (($v = data_get($xmux, 'cMaxReuseTimes')) !== null)
-                        $reuseSettings['c-max-reuse-times'] = $v;
-                    if (($v = data_get($xmux, 'hMaxRequestTimes')) !== null)
-                        $reuseSettings['h-max-request-times'] = $v;
-                    if (($v = data_get($xmux, 'hMaxReusableSecs')) !== null)
-                        $reuseSettings['h-max-reusable-secs'] = $v;
-                    if (($v = data_get($xmux, 'hKeepAlivePeriod')) !== null)
-                        $reuseSettings['h-keep-alive-period'] = (int) $v;
-                    if (!empty($reuseSettings))
-                        $xhttpOpts['reuse-settings'] = $reuseSettings;
+                $settings = data_get($protocol_settings, 'network_settings') ?? [];
+                // network_settings survives the panel's protocol schema filtering.
+                // These native names configure the subscription, not the Xray server.
+                $proxy = self::mapXhttpProxyFields($settings);
+                unset($proxy['server'], $proxy['port']);
+                $array = array_replace($array, $proxy);
+                if (($udp = data_get($settings, 'udp')) !== null) {
+                    $array['udp'] = (bool) $udp;
                 }
-
-                if ($dlSettings = data_get($extra, 'downloadSettings')) {
-                    $dlXhttp = data_get($dlSettings, 'xhttpSettings', []);
-                    $dlExtra = data_get($dlXhttp, 'extra', []);
-                    $dlTls = data_get($dlSettings, 'tlsSettings', []);
-
-                    $dlOpts = [];
-                    if ($v = data_get($dlXhttp, 'path'))
-                        $dlOpts['path'] = $v;
-                    if ($v = data_get($dlXhttp, 'mode'))
-                        $dlOpts['mode'] = $v;
-                    if ($v = data_get($dlExtra, 'headers'))
-                        $dlOpts['headers'] = $v;
-                    if (($v = data_get($dlExtra, 'noGRPCHeader')) !== null)
-                        $dlOpts['no-grpc-header'] = (bool) $v;
-                    if ($v = data_get($dlExtra, 'xPaddingBytes'))
-                        $dlOpts['x-padding-bytes'] = $v;
-
-                    if ($dlXmux = data_get($dlExtra, 'xmux')) {
-                        $dlReuse = [];
-                        if (($v = data_get($dlXmux, 'maxConcurrency')) !== null)
-                            $dlReuse['max-concurrency'] = $v;
-                        if (($v = data_get($dlXmux, 'maxConnections')) !== null)
-                            $dlReuse['max-connections'] = $v;
-                        if (($v = data_get($dlXmux, 'cMaxReuseTimes')) !== null)
-                            $dlReuse['c-max-reuse-times'] = $v;
-                        if (($v = data_get($dlXmux, 'hMaxRequestTimes')) !== null)
-                            $dlReuse['h-max-request-times'] = $v;
-                        if (($v = data_get($dlXmux, 'hMaxReusableSecs')) !== null)
-                            $dlReuse['h-max-reusable-secs'] = $v;
-                        if (($v = data_get($dlXmux, 'hKeepAlivePeriod')) !== null)
-                            $dlReuse['h-keep-alive-period'] = (int) $v;
-                        if (!empty($dlReuse))
-                            $dlOpts['reuse-settings'] = $dlReuse;
-                    }
-
-                    if ($v = data_get($dlSettings, 'address'))
-                        $dlOpts['server'] = $v;
-                    if (($v = data_get($dlSettings, 'port')) !== null)
-                        $dlOpts['port'] = (int) $v;
-
-                    $dlSecurity = data_get($dlSettings, 'security');
-                    if ($dlSecurity === 'tls' || $dlSecurity === 'reality')
-                        $dlOpts['tls'] = true;
-                    if (($v = data_get($dlTls, 'allowInsecure')) !== null)
-                        $dlOpts['skip-cert-verify'] = (bool) $v;
-                    if ($v = data_get($dlTls, 'serverName'))
-                        $dlOpts['servername'] = $v;
-                    if ($v = data_get($dlTls, 'alpn'))
-                        $dlOpts['alpn'] = $v;
-                    if ($v = data_get($dlTls, 'fingerprint'))
-                        $dlOpts['client-fingerprint'] = $v;
-
-                    if ($dlSecurity === 'reality') {
-                        $dlReality = data_get($dlSettings, 'realitySettings', []);
-                        $dlOpts['reality-opts'] = array_filter([
-                            'public-key' => data_get($dlReality, 'publicKey'),
-                            'short-id' => data_get($dlReality, 'shortId'),
-                        ], fn($v) => $v !== null);
-                    }
-
-                    if ($dlEch = data_get($dlTls, 'ech')) {
-                        if (data_get($dlEch, 'enabled')) {
-                            $dlOpts['ech-opts'] = array_filter([
-                                'enable' => true,
-                                'config' => Helper::toMihomoEchConfig(data_get($dlEch, 'config')),
-                                'query-server-name' => data_get($dlEch, 'query_server_name'),
-                            ], fn($v) => $v !== null);
-                        }
-                    }
-
-                    if (!empty($dlOpts))
-                        $xhttpOpts['download-settings'] = $dlOpts;
+                if (array_key_exists('encryption', $settings)) {
+                    $array['encryption'] = $settings['encryption'] ?? '';
                 }
-
-                if (!empty($xhttpOpts))
-                    $array['xhttp-opts'] = $xhttpOpts;
+                if ($options = self::buildXhttpOptions($settings)) {
+                    $array['xhttp-opts'] = $options;
+                }
                 break;
             default:
                 break;
         }
         self::appendMultiplex($array, $protocol_settings);
         return $array;
+    }
+
+    private static function xhttpValue(array $input, array $keys)
+    {
+        foreach ($keys as $key) {
+            if (($value = data_get($input, $key)) !== null) {
+                return $value;
+            }
+        }
+        return null;
+    }
+
+    private static function xhttpExtra(array $settings): array
+    {
+        // Xray extra replaces extension fields; it does not merge with the root.
+        if (!array_key_exists('extra', $settings)) {
+            return $settings;
+        }
+        if ($settings['extra'] === null) {
+            return [];
+        }
+        if (!is_array($settings['extra'])) {
+            throw new \InvalidArgumentException('XHTTP extra must be an object.');
+        }
+        return $settings['extra'];
+    }
+
+    private static function xhttpEmptyStrings(array $input, array $keys): array
+    {
+        // Laravel converts explicit empty strings to null before saving JSON.
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $input) && $input[$key] === null) {
+                $input[$key] = '';
+            }
+        }
+        return $input;
+    }
+
+    private static function xhttpObject(array $input)
+    {
+        // Preserve an empty map as {}, rather than the panel's default [].
+        return $input === [] ? new \stdClass() : $input;
+    }
+
+    private static function mapXhttpProxyFields(array $input): array
+    {
+        $input = self::xhttpEmptyStrings($input, [
+            'server', 'name-cert-verify', 'fingerprint', 'certificate',
+            'private-key', 'servername', 'client-fingerprint',
+        ]);
+        $objects = [
+            'ech-opts' => ['config', 'query-server-name'],
+            'shadow-tls-opts' => ['password'],
+            'restls-opts' => ['password', 'version-hint', 'restls-script'],
+            'jls-opts' => ['username', 'password'],
+            'reality-opts' => ['public-key', 'short-id'],
+        ];
+        $result = [];
+        foreach ([
+            'server', 'port', 'tls', 'alpn', 'ech-opts', 'shadow-tls-opts',
+            'restls-opts', 'jls-opts', 'reality-opts', 'skip-cert-verify',
+            'name-cert-verify', 'fingerprint', 'certificate', 'private-key',
+            'servername', 'client-fingerprint',
+        ] as $key) {
+            if (($value = data_get($input, $key)) === null) {
+                continue;
+            }
+            if (isset($objects[$key]) && is_array($value)) {
+                $value = self::xhttpObject(self::xhttpEmptyStrings($value, $objects[$key]));
+            } elseif (in_array($key, ['tls', 'skip-cert-verify'], true)) {
+                $value = (bool) $value;
+            }
+            $result[$key] = $value;
+        }
+        return $result;
+    }
+
+    private static function mapXhttpFields(array $input): array
+    {
+        $aliases = [
+            'headers' => ['headers'],
+            'no-grpc-header' => ['noGRPCHeader', 'no-grpc-header'],
+            'x-padding-bytes' => ['xPaddingBytes', 'x-padding-bytes'],
+            'x-padding-obfs-mode' => ['xPaddingObfsMode', 'x-padding-obfs-mode'],
+            'x-padding-key' => ['xPaddingKey', 'x-padding-key'],
+            'x-padding-header' => ['xPaddingHeader', 'x-padding-header'],
+            'x-padding-placement' => ['xPaddingPlacement', 'x-padding-placement'],
+            'x-padding-method' => ['xPaddingMethod', 'x-padding-method'],
+            'uplink-http-method' => ['uplinkHTTPMethod', 'uplink-http-method'],
+            'session-placement' => ['sessionIDPlacement', 'sessionPlacement', 'session-placement'],
+            'session-key' => ['sessionIDKey', 'sessionKey', 'session-key'],
+            'session-table' => ['sessionIDTable', 'sessionTable', 'session-table'],
+            'session-length' => ['sessionIDLength', 'sessionLength', 'session-length'],
+            'seq-placement' => ['seqPlacement', 'seq-placement'],
+            'seq-key' => ['seqKey', 'seq-key'],
+            'uplink-data-placement' => ['uplinkDataPlacement', 'uplink-data-placement'],
+            'uplink-data-key' => ['uplinkDataKey', 'uplink-data-key'],
+            'uplink-chunk-size' => ['uplinkChunkSize', 'uplink-chunk-size'],
+            'sc-max-each-post-bytes' => ['scMaxEachPostBytes', 'sc-max-each-post-bytes'],
+            'sc-min-posts-interval-ms' => ['scMinPostsIntervalMs', 'sc-min-posts-interval-ms'],
+        ];
+        $result = [];
+        foreach ($aliases as $output => $keys) {
+            if ($output !== 'headers' && !in_array($output, ['no-grpc-header', 'x-padding-obfs-mode'], true)) {
+                $input = self::xhttpEmptyStrings($input, $keys);
+            }
+            if (($value = self::xhttpValue($input, $keys)) !== null) {
+                if ($output === 'headers' && is_array($value)) {
+                    $value = self::xhttpObject(self::xhttpEmptyStrings($value, array_keys($value)));
+                }
+                $result[$output] = in_array($output, ['no-grpc-header', 'x-padding-obfs-mode'], true)
+                    ? (bool) $value : $value;
+            }
+        }
+        // A zero range means "use the default" in Xray, not in native Mihomo.
+        foreach ([
+            'xPaddingBytes' => ['x-padding-bytes', '100-1000'],
+            'scMaxEachPostBytes' => ['sc-max-each-post-bytes', 1000000],
+            'scMinPostsIntervalMs' => ['sc-min-posts-interval-ms', 30],
+        ] as $key => [$output, $default]) {
+            if (array_key_exists($key, $input) && in_array($input[$key], [0, '0', '0-0', ''], true)) {
+                $result[$output] = $default;
+            }
+        }
+        return $result;
+    }
+
+    private static function mapXhttpReuse(array $input): array
+    {
+        $aliases = [
+            'max-concurrency' => ['maxConcurrency', 'max-concurrency'],
+            'max-connections' => ['maxConnections', 'max-connections'],
+            'c-max-reuse-times' => ['cMaxReuseTimes', 'c-max-reuse-times'],
+            'h-max-request-times' => ['hMaxRequestTimes', 'h-max-request-times'],
+            'h-max-reusable-secs' => ['hMaxReusableSecs', 'h-max-reusable-secs'],
+            'h-keep-alive-period' => ['hKeepAlivePeriod', 'h-keep-alive-period'],
+        ];
+        $result = [];
+        foreach ($aliases as $output => $keys) {
+            if ($output !== 'h-keep-alive-period') {
+                $input = self::xhttpEmptyStrings($input, $keys);
+            }
+            if (($value = self::xhttpValue($input, $keys)) !== null) {
+                $result[$output] = $output === 'h-keep-alive-period' ? (int) $value : $value;
+            }
+        }
+        return $result;
+    }
+
+    private static function buildXhttpOptions(array $settings): array
+    {
+        $settings = self::xhttpEmptyStrings($settings, ['path', 'host', 'mode']);
+        $extra = self::xhttpExtra($settings);
+        $result = [];
+        foreach (['path', 'host', 'mode'] as $key) {
+            if (($value = data_get($settings, $key)) !== null) {
+                $result[$key] = $value;
+            }
+        }
+        $result = array_merge($result, self::mapXhttpFields($extra));
+        if (($reuse = self::xhttpValue($extra, ['xmux', 'reuse-settings'])) !== null) {
+            $result['reuse-settings'] = self::xhttpObject(self::mapXhttpReuse($reuse));
+        }
+        if (($download = self::xhttpValue($extra, ['downloadSettings', 'download-settings'])) !== null) {
+            $result['download-settings'] = self::xhttpObject(self::buildXhttpDownload($download, $result));
+        }
+        return $result;
+    }
+
+    private static function buildXhttpDownload(array $settings, array $upload): array
+    {
+        $xhttp = data_get($settings, 'xhttpSettings', $settings) ?? [];
+        $xhttp = self::xhttpEmptyStrings($xhttp, ['path', 'host']);
+        $extra = self::xhttpExtra($xhttp);
+        $tls = data_get($settings, 'tlsSettings') ?? [];
+        $tls = self::xhttpEmptyStrings($tls, ['serverName', 'fingerprint']);
+        $result = self::mapXhttpProxyFields($settings);
+        foreach (['path', 'host'] as $key) {
+            if (($value = data_get($xhttp, $key)) !== null) {
+                $result[$key] = $value;
+            }
+        }
+        if (($headers = data_get($extra, 'headers')) !== null) {
+            $result['headers'] = self::xhttpObject(self::xhttpEmptyStrings($headers, array_keys($headers)));
+        }
+        if (($reuse = self::xhttpValue($extra, ['xmux', 'reuse-settings'])) !== null) {
+            $result['reuse-settings'] = self::xhttpObject(self::mapXhttpReuse($reuse));
+        }
+
+        // Download padding is inherited by Mihomo, never independently overridden.
+        $inherited = [
+            'x-padding-bytes' => '100-1000',
+            'x-padding-obfs-mode' => false,
+            'x-padding-key' => 'x_padding',
+            'x-padding-header' => 'Referer',
+            'x-padding-placement' => 'queryInHeader',
+            'x-padding-method' => 'repeat-x',
+        ];
+        $downloadFields = self::mapXhttpFields($extra);
+        foreach ($inherited as $key => $default) {
+            if (!array_key_exists($key, $downloadFields)) {
+                continue;
+            }
+            $downValue = $downloadFields[$key] === '' ? $default : $downloadFields[$key];
+            $upValue = ($upload[$key] ?? '') === '' ? $default : $upload[$key];
+            $matches = $key === 'x-padding-header'
+                ? strcasecmp((string) $downValue, (string) $upValue) === 0
+                : (string) $downValue === (string) $upValue;
+            if (!$matches) {
+                throw new \InvalidArgumentException("Mihomo XHTTP download-settings cannot override {$key}.");
+            }
+        }
+
+        if (($value = data_get($settings, 'address')) !== null) {
+            $result['server'] = $value;
+        }
+        if (array_key_exists('port', $result)) {
+            $result['port'] = (int) $result['port'];
+        }
+        $security = data_get($settings, 'security');
+        if ($security === 'tls' || $security === 'reality') {
+            $result['tls'] = true;
+        } elseif ($security === 'none') {
+            $result['tls'] = false;
+        }
+        $tlsAliases = [
+            'skip-cert-verify' => 'allowInsecure',
+            'servername' => 'serverName',
+            'alpn' => 'alpn',
+            'client-fingerprint' => 'fingerprint',
+        ];
+        foreach ($tlsAliases as $output => $key) {
+            if (($value = data_get($tls, $key)) !== null) {
+                $result[$output] = $output === 'skip-cert-verify' ? (bool) $value : $value;
+            }
+        }
+        if ($security === 'reality') {
+            $reality = data_get($settings, 'realitySettings') ?? [];
+            $reality = self::xhttpEmptyStrings($reality, ['publicKey', 'shortId']);
+            $result['reality-opts'] = array_replace((array) ($result['reality-opts'] ?? []), array_filter([
+                'public-key' => data_get($reality, 'publicKey'),
+                'short-id' => data_get($reality, 'shortId'),
+            ], fn($value) => $value !== null));
+        }
+        if (is_array($ech = data_get($tls, 'ech'))) {
+            if (($enabled = self::xhttpValue($ech, ['enabled', 'enable'])) !== null) {
+                $mapped = ['enable' => (bool) $enabled];
+                if (array_key_exists('config', $ech)) {
+                    $mapped['config'] = Helper::toMihomoEchConfig($ech['config']) ?? '';
+                }
+                if (array_key_exists('query_server_name', $ech)) {
+                    $mapped['query-server-name'] = $ech['query_server_name'] ?? '';
+                }
+                $result['ech-opts'] = array_replace((array) ($result['ech-opts'] ?? []), $mapped);
+            }
+        }
+        return $result;
     }
 
     public static function buildTrojan($password, $server)
