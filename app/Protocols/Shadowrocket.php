@@ -346,6 +346,51 @@ class Shadowrocket extends AbstractProtocol
         return $predefined[$table] ?? $table;
     }
 
+    private static function xhttpChromeHeaders(array $headers): array
+    {
+        $uaKey = null;
+        foreach ($headers as $name => $value) {
+            if (strcasecmp($name, 'User-Agent') !== 0) {
+                continue;
+            }
+            if ($uaKey !== null) {
+                // Ambiguous duplicate names retain their original values.
+                return $headers;
+            }
+            $uaKey = $name;
+        }
+        if ($uaKey === null || $headers[$uaKey] !== 'chrome') {
+            return $headers;
+        }
+
+        // Fixed Chrome150 fetch profile captured from Xray b26a91d and tested on
+        // Shadowrocket 2.2.92. Keep the UA and Client Hints version paired.
+        $defaults = [
+            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+            'Accept' => '*/*',
+            'Accept-Language' => 'en-US,en;q=0.9',
+            'Cache-Control' => 'no-cache',
+            'DNT' => '1',
+            'Pragma' => 'no-cache',
+            'Priority' => 'u=1, i',
+            'Sec-CH-UA' => '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+            'Sec-CH-UA-Mobile' => '?0',
+            'Sec-CH-UA-Platform' => '"Windows"',
+            'Sec-Fetch-Dest' => 'empty',
+            'Sec-Fetch-Mode' => 'cors',
+            'Sec-Fetch-Site' => 'same-origin',
+        ];
+        $headers[$uaKey] = $defaults['User-Agent'];
+        $present = array_fill_keys(array_map('strtolower', array_keys($headers)), true);
+        foreach ($defaults as $name => $value) {
+            // Explicit values, including empty strings, override defaults.
+            if (!isset($present[strtolower($name)])) {
+                $headers[$name] = $value;
+            }
+        }
+        return $headers;
+    }
+
     private static function buildXhttpParameters(array $settings, array $protocolSettings, array $server): array
     {
         $extra = self::xhttpExtra($settings);
@@ -369,6 +414,8 @@ class Shadowrocket extends AbstractProtocol
                 || strpbrk($value, "\r\n") !== false) {
                 throw new \InvalidArgumentException('XHTTP headers must use valid names and string values; set Host with xhttpSettings.host.');
             }
+        }
+        foreach (self::xhttpChromeHeaders($headers) as $name => $value) {
             $params[$name] = $value;
         }
 
@@ -382,9 +429,9 @@ class Shadowrocket extends AbstractProtocol
             $inner['xPaddingObfsMode'] = (bool)$extra['xPaddingObfsMode'];
         }
         // Shadowrocket 2.2.92 uses raw token length; Xray checks HPACK Huffman bytes.
-        // Adapt only the observed packet-up/header profile; keep shared input standard.
+        // Packet-up and stream-up tokenish/header behavior was verified with Shadowrocket 2.2.92.
         // 160 Base62 characters encode to at least 100 bytes; retain the 1000 upper limit.
-        if ($mode === 'packet-up'
+        if (in_array($mode, ['packet-up', 'stream-up'], true)
             && ($inner['xPaddingMethod'] ?? null) === 'tokenish'
             && ($extra['xPaddingObfsMode'] ?? null) === true
             && ($inner['xPaddingPlacement'] ?? null) === 'header'
