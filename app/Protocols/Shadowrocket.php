@@ -274,11 +274,6 @@ class Shadowrocket extends AbstractProtocol
                 break;
             case 'xhttp':
                 $config['obfs'] = "xhttp";
-                // Allow HTTP/2 when the upload TLS/Reality connection negotiates h2.
-                // Keep normal ALPN negotiation and independent download settings unchanged.
-                if (in_array((int)data_get($protocol_settings, 'tls'), [1, 2], true)) {
-                    $config['h2'] = 1;
-                }
                 // 明文格式下 Shadowrocket 依赖 type 识别 xhttp 传输，encryption 才会被读取为 enc
                 if ($enc !== null) {
                     $config['type'] = 'xhttp';
@@ -346,6 +341,32 @@ class Shadowrocket extends AbstractProtocol
         return $predefined[$table] ?? $table;
     }
 
+    private static function shadowrocketTokenishPadding($range)
+    {
+        // Explicit compatibility profile for the observed Base62 raw-character generator.
+        // The source range must describe the server's accepted HPACK byte range.
+        if ((!is_int($range) && !is_string($range))
+            || !preg_match('/^(0|[1-9][0-9]*)(?:-(0|[1-9][0-9]*))?$/D', (string)$range, $match)) {
+            throw new \InvalidArgumentException('Shadowrocket tokenish compatibility requires a non-negative integer or L-U padding range.');
+        }
+        $limits = ['options' => ['min_range' => 0, 'max_range' => 2147483647]];
+        $lower = filter_var($match[1], FILTER_VALIDATE_INT, $limits);
+        $upper = filter_var($match[2] ?? $match[1], FILTER_VALIDATE_INT, $limits);
+        if ($lower === false || $upper === false || $lower > $upper) {
+            throw new \InvalidArgumentException('Shadowrocket tokenish compatibility requires an ordered int32 padding range.');
+        }
+        if ($lower === 0 && $upper === 0) {
+            // Keep the explicit default sentinel; 0-0 does not mean padding is disabled.
+            return $range;
+        }
+        // Every Base62 character uses 5..8 HPACK Huffman bits. Do not depend on tolerance.
+        $safeLower = intdiv($lower * 8 + 4, 5);
+        if ($safeLower > $upper) {
+            throw new \InvalidArgumentException('This padding range is too narrow for the conservative Shadowrocket tokenish compatibility profile; change the server/client profile explicitly.');
+        }
+        return "{$safeLower}-{$upper}";
+    }
+
     private static function buildXhttpParameters(array $settings, array $protocolSettings, array $server): array
     {
         $extra = self::xhttpExtra($settings);
@@ -381,15 +402,18 @@ class Shadowrocket extends AbstractProtocol
         if (isset($extra['xPaddingObfsMode'])) {
             $inner['xPaddingObfsMode'] = (bool)$extra['xPaddingObfsMode'];
         }
-        // Shadowrocket 2.2.92 uses raw token length; Xray checks HPACK Huffman bytes.
-        // Adapt only the observed packet-up/header profile; keep shared input standard.
-        // 160 Base62 characters encode to at least 100 bytes; retain the 1000 upper limit.
-        if ($mode === 'packet-up'
-            && ($inner['xPaddingMethod'] ?? null) === 'tokenish'
-            && ($extra['xPaddingObfsMode'] ?? null) === true
-            && ($inner['xPaddingPlacement'] ?? null) === 'header'
-            && ($inner['xPaddingBytes'] ?? null) === '100-1000') {
-            $inner['xPaddingBytes'] = '160-1000';
+        if (array_key_exists('shadowrocketTokenishCompat', $extra)) {
+            if (!is_bool($extra['shadowrocketTokenishCompat'])) {
+                throw new \InvalidArgumentException('shadowrocketTokenishCompat must be a boolean.');
+            }
+            if ($extra['shadowrocketTokenishCompat']) {
+                if (($inner['xPaddingMethod'] ?? null) !== 'tokenish'
+                    || ($inner['xPaddingObfsMode'] ?? false) !== true
+                    || !array_key_exists('xPaddingBytes', $inner)) {
+                    throw new \InvalidArgumentException('Shadowrocket tokenish compatibility requires tokenish, xPaddingObfsMode=true, and an explicit server padding range.');
+                }
+                $inner['xPaddingBytes'] = self::shadowrocketTokenishPadding($inner['xPaddingBytes']);
+            }
         }
         if ($stream && isset($extra['noGRPCHeader'])) {
             $inner['noGRPCHeader'] = (bool)$extra['noGRPCHeader'];
