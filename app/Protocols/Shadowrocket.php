@@ -273,24 +273,20 @@ class Shadowrocket extends AbstractProtocol
                 }
                 break;
             case 'xhttp':
-                $config['obfs'] = "xhttp";
-                // Allow HTTP/2 when the upload TLS/Reality connection negotiates h2.
-                // Keep normal ALPN negotiation and independent download settings unchanged.
+                $config['obfs'] = 'xhttp';
+                // Preserve the current template's upload HTTP/2 option for TLS/Reality.
                 if (in_array((int)data_get($protocol_settings, 'tls'), [1, 2], true)) {
                     $config['h2'] = 1;
                 }
-                // 明文格式下 Shadowrocket 依赖 type 识别 xhttp 传输，encryption 才会被读取为 enc
                 if ($enc !== null) {
                     $config['type'] = 'xhttp';
                     $config['encryption'] = $enc;
                 }
-                $settings = data_get($protocol_settings, 'network_settings') ?? [];
-                if ($path = data_get($settings, 'path')) {
-                    $config['path'] = $path;
+                $settings = self::xhttpObject(data_get($protocol_settings, 'network_settings') ?? [], 'XHTTP network_settings');
+                if (array_key_exists('path', $settings)) {
+                    $config['path'] = $settings['path'];
                 }
-                if ($mode = data_get($settings, 'mode', 'auto')) {
-                    $config['mode'] = $mode;
-                }
+                $config['mode'] = array_key_exists('mode', $settings) ? $settings['mode'] : 'auto';
                 $config['obfsParam'] = json_encode(
                     self::buildXhttpParameters($settings, $protocol_settings, $server),
                     JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
@@ -304,25 +300,37 @@ class Shadowrocket extends AbstractProtocol
         return $uri;
     }
 
+    private static function xhttpObject($value, string $label): array
+    {
+        if (is_string($value)) {
+            $value = json_decode($value, false, 512, JSON_THROW_ON_ERROR);
+        }
+        if ($value instanceof \stdClass) {
+            return get_object_vars($value);
+        }
+        if (is_array($value) && ($value === [] || !array_is_list($value))) {
+            return $value;
+        }
+        throw new \InvalidArgumentException($label . ' must be a JSON object.');
+    }
+
     private static function xhttpExtra(array $settings): array
     {
-        if (!array_key_exists('extra', $settings)) {
-            return $settings;
+        if (array_key_exists('extra', $settings)) {
+            // Xray extra replaces advanced root options; host/path/mode stay at the root.
+            return $settings['extra'] === null ? [] : self::xhttpObject($settings['extra'], 'XHTTP extra');
         }
-        if ($settings['extra'] === null) {
-            return [];
-        }
-        if (!is_array($settings['extra'])) {
-            throw new \InvalidArgumentException('XHTTP extra must be an object.');
-        }
-        // Xray extra replaces advanced root fields; host/path/mode stay at the root.
-        return $settings['extra'];
+        unset($settings['host'], $settings['path'], $settings['mode']);
+        return $settings;
     }
 
     private static function xhttpHost(...$candidates): string
     {
         foreach ($candidates as $candidate) {
             if (is_string($candidate) && $candidate !== '') {
+                if (strpbrk($candidate, "\r\n") !== false) {
+                    throw new \InvalidArgumentException('XHTTP Host must not contain CR/LF.');
+                }
                 return $candidate;
             }
         }
@@ -331,7 +339,7 @@ class Shadowrocket extends AbstractProtocol
 
     private static function xhttpSessionTable(string $table): string
     {
-        // Xray predefined names are case-sensitive; Shadowrocket receives the alphabet.
+        // Native sessionTable uses an alphabet; retain sessionIDTable separately below.
         $predefined = [
             'ALPHABET' => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
             'Alphabet' => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
@@ -346,153 +354,102 @@ class Shadowrocket extends AbstractProtocol
         return $predefined[$table] ?? $table;
     }
 
-    private static function xhttpChromeHeaders(array $headers): array
+    private static function xhttpNativeString($value, string $key): string
     {
-        $uaKey = null;
-        foreach ($headers as $name => $value) {
-            if (strcasecmp($name, 'User-Agent') !== 0) {
-                continue;
-            }
-            if ($uaKey !== null) {
-                // Ambiguous duplicate names retain their original values.
-                return $headers;
-            }
-            $uaKey = $name;
+        if (!is_string($value) && !is_int($value) && !is_float($value)) {
+            throw new \InvalidArgumentException('XHTTP ' . $key . ' must be a number or range string.');
         }
-        if ($uaKey === null || $headers[$uaKey] !== 'chrome') {
-            return $headers;
-        }
-
-        // Fixed Chrome150 fetch profile captured from Xray b26a91d and tested on
-        // Shadowrocket 2.2.92. Keep the UA and Client Hints version paired.
-        $defaults = [
-            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
-            'Accept' => '*/*',
-            'Accept-Language' => 'en-US,en;q=0.9',
-            'Cache-Control' => 'no-cache',
-            'DNT' => '1',
-            'Pragma' => 'no-cache',
-            'Priority' => 'u=1, i',
-            'Sec-CH-UA' => '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
-            'Sec-CH-UA-Mobile' => '?0',
-            'Sec-CH-UA-Platform' => '"Windows"',
-            'Sec-Fetch-Dest' => 'empty',
-            'Sec-Fetch-Mode' => 'cors',
-            'Sec-Fetch-Site' => 'same-origin',
-        ];
-        $headers[$uaKey] = $defaults['User-Agent'];
-        $present = array_fill_keys(array_map('strtolower', array_keys($headers)), true);
-        foreach ($defaults as $name => $value) {
-            // Explicit values, including empty strings, override defaults.
-            if (!isset($present[strtolower($name)])) {
-                $headers[$name] = $value;
-            }
-        }
-        return $headers;
+        return (string)$value;
     }
 
     private static function buildXhttpParameters(array $settings, array $protocolSettings, array $server): array
     {
         $extra = self::xhttpExtra($settings);
-        $mode = data_get($settings, 'mode') ?: 'auto';
-        $packet = in_array($mode, ['auto', 'packet-up'], true);
-        $stream = in_array($mode, ['auto', 'stream-up', 'stream-one'], true);
-        $session = in_array($mode, ['auto', 'packet-up', 'stream-up'], true);
+        $headers = ($extra['headers'] ?? null) === null ? []
+            : self::xhttpObject($extra['headers'], 'XHTTP headers');
+        $headerHost = null;
+        $hasHeaderHost = false;
+        foreach ($headers as $name => $value) {
+            $name = (string)$name;
+            if (!preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D', $name)
+                || !is_string($value) || strpbrk($value, "\r\n") !== false) {
+                throw new \InvalidArgumentException('XHTTP headers must use valid names and string values without CR/LF.');
+            }
+            if (strcasecmp($name, 'Host') === 0) {
+                if ($hasHeaderHost) {
+                    throw new \InvalidArgumentException('XHTTP headers contain duplicate Host names.');
+                }
+                $hasHeaderHost = true;
+                $headerHost = $value;
+            }
+        }
         $tlsMode = (int)data_get($protocolSettings, 'tls');
         $sni = $tlsMode === 2 ? data_get($protocolSettings, 'reality_settings.server_name')
             : ($tlsMode === 1 ? data_get($protocolSettings, 'tls_settings.server_name') : null);
-        $params = ['Host' => self::xhttpHost(data_get($settings, 'host'), $sni, $server['host'])];
-
-        // Root obfsParam entries are HTTP headers; the empty key is reserved for native options.
-        $headers = data_get($extra, 'headers') ?? [];
-        if (!is_array($headers)) {
-            throw new \InvalidArgumentException('XHTTP headers must be an object.');
-        }
+        $params = ['Host' => self::xhttpHost(data_get($settings, 'host'), $headerHost, $sni, $server['host'])];
         foreach ($headers as $name => $value) {
-            if (!is_string($name) || !preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D', $name)
-                || strcasecmp($name, 'Host') === 0 || !is_string($value)
-                || strpbrk($value, "\r\n") !== false) {
-                throw new \InvalidArgumentException('XHTTP headers must use valid names and string values; set Host with xhttpSettings.host.');
+            if (strcasecmp((string)$name, 'Host') !== 0) {
+                // Keep user-supplied values, including "chrome" and empty strings, unchanged.
+                $params[$name] = $value;
             }
-        }
-        foreach (self::xhttpChromeHeaders($headers) as $name => $value) {
-            $params[$name] = $value;
         }
 
-        $inner = [];
-        foreach (['xPaddingBytes', 'xPaddingKey', 'xPaddingHeader', 'xPaddingPlacement', 'xPaddingMethod', 'uplinkHTTPMethod'] as $key) {
-            if (isset($extra[$key])) {
-                $inner[$key] = $extra[$key];
-            }
-        }
-        if (isset($extra['xPaddingObfsMode'])) {
-            $inner['xPaddingObfsMode'] = (bool)$extra['xPaddingObfsMode'];
-        }
-        // Shadowrocket 2.2.92 uses raw token length; Xray checks HPACK Huffman bytes.
-        // Packet-up and stream-up tokenish/header behavior was verified with Shadowrocket 2.2.92.
-        // 160 Base62 characters encode to at least 100 bytes; retain the 1000 upper limit.
-        if (in_array($mode, ['packet-up', 'stream-up'], true)
-            && ($inner['xPaddingMethod'] ?? null) === 'tokenish'
-            && ($extra['xPaddingObfsMode'] ?? null) === true
-            && ($inner['xPaddingPlacement'] ?? null) === 'header'
-            && ($inner['xPaddingBytes'] ?? null) === '100-1000') {
-            $inner['xPaddingBytes'] = '160-1000';
-        }
-        if ($stream && isset($extra['noGRPCHeader'])) {
-            $inner['noGRPCHeader'] = (bool)$extra['noGRPCHeader'];
-        }
-        if ($session) {
-            foreach (['sessionPlacement' => 'sessionIDPlacement', 'sessionKey' => 'sessionIDKey'] as $output => $canonical) {
-                if (isset($extra[$canonical]) || isset($extra[$output])) {
-                    $inner[$output] = $extra[$canonical] ?? $extra[$output];
+        // Keep every advanced option, including future keys and complete nested downloadSettings.
+        // Preservation is not a claim that the client's runtime understands each option.
+        $inner = $extra;
+        unset($inner['headers']);
+
+        // Add verified native aliases without discarding the original canonical fields.
+        foreach (['sessionPlacement' => 'sessionIDPlacement', 'sessionKey' => 'sessionIDKey',
+            'sessionTable' => 'sessionIDTable', 'sessionLength' => 'sessionIDLength'] as $output => $canonical) {
+            if (array_key_exists($canonical, $extra) && $extra[$canonical] !== null) {
+                $value = $extra[$canonical];
+                if ($output === 'sessionTable') {
+                    $value = self::xhttpSessionTable(self::xhttpNativeString($value, $canonical));
                 }
-            }
-            foreach (['sessionTable' => 'sessionIDTable', 'sessionLength' => 'sessionIDLength'] as $output => $canonical) {
-                $source = array_key_exists($canonical, $extra) ? $canonical : $output;
-                if (isset($extra[$source])) {
-                    $value = (string)$extra[$source];
-                    $inner[$output] = $output === 'sessionTable' && $source === $canonical
-                        ? self::xhttpSessionTable($value) : $value;
-                }
+                $inner[$output] = $value;
             }
         }
-        if ($packet) {
-            foreach (['seqPlacement', 'seqKey', 'uplinkDataPlacement', 'uplinkDataKey'] as $key) {
-                if (isset($extra[$key])) {
-                    $inner[$key] = $extra[$key];
-                }
+        foreach (['sessionTable', 'sessionLength', 'uplinkChunkSize', 'scMaxEachPostBytes', 'scMinPostsIntervalMs',
+            'maxConcurrency', 'maxConnections', 'cMaxReuseTimes', 'hMaxRequestTimes', 'hMaxReusableSecs', 'hKeepAlivePeriod'] as $key) {
+            if (array_key_exists($key, $inner) && $inner[$key] !== null) {
+                $inner[$key] = self::xhttpNativeString($inner[$key], $key);
             }
-            foreach (['uplinkChunkSize', 'scMaxEachPostBytes', 'scMinPostsIntervalMs'] as $key) {
-                if (isset($extra[$key])) {
-                    $inner[$key] = (string)$extra[$key];
+        }
+
+        if (array_key_exists('xmux', $extra) && $extra['xmux'] !== null) {
+            $xmux = self::xhttpObject($extra['xmux'], 'XHTTP xmux');
+            // Retain the full object, including unknown future XMUX options and numeric zero.
+            $inner['xmux'] = (object)$xmux;
+            foreach (['maxConcurrency', 'maxConnections', 'cMaxReuseTimes', 'hMaxRequestTimes', 'hMaxReusableSecs', 'hKeepAlivePeriod'] as $key) {
+                if (array_key_exists($key, $xmux) && $xmux[$key] !== null) {
+                    $value = $xmux[$key];
+                    $native = self::xhttpNativeString($value, 'xmux.' . $key);
+                    $inner[$key] = in_array($key, ['maxConnections', 'cMaxReuseTimes'], true) && !is_string($value)
+                        ? $native . '-' . $native : $native;
                 }
             }
         }
-        $xmux = data_get($extra, 'xmux') ?? [];
-        foreach (['maxConcurrency', 'maxConnections', 'cMaxReuseTimes', 'hMaxRequestTimes', 'hMaxReusableSecs', 'hKeepAlivePeriod'] as $key) {
-            if (isset($xmux[$key])) {
-                $value = $xmux[$key];
-                // Preserve the existing Shadowrocket representation, including explicit zero ranges.
-                $inner[$key] = in_array($key, ['maxConnections', 'cMaxReuseTimes'], true) && !is_string($value)
-                    ? "{$value}-{$value}" : (string)$value;
+
+        if (array_key_exists('downloadSettings', $extra) && $extra['downloadSettings'] !== null) {
+            $download = self::xhttpObject($extra['downloadSettings'], 'XHTTP downloadSettings');
+            // No invented download headers/XMUX/ALPN keys: preserve their original structure.
+            $inner['downloadSettings'] = (object)$download;
+            $address = data_get($download, 'address');
+            if (is_string($address) && $address !== '') {
+                $security = data_get($download, 'security');
+                $downloadSni = $security === 'reality' ? data_get($download, 'realitySettings.serverName')
+                    : ($security === 'tls' ? data_get($download, 'tlsSettings.serverName') : null);
+                $inner['downloadTargetHost'] = $address;
+                $inner['downloadTargetPort'] = self::xhttpNativeString(data_get($download, 'port', 443), 'downloadSettings.port');
+                $inner['downloadServerName'] = in_array($security, ['tls', 'reality'], true)
+                    ? self::xhttpHost($downloadSni, $address) : '';
+                $inner['downloadHTTPHost'] = self::xhttpHost(data_get($download, 'xhttpSettings.host'), $downloadSni, $address);
             }
         }
-        if ($session && ($download = data_get($extra, 'downloadSettings'))) {
-            $address = data_get($download, 'address', '');
-            $security = data_get($download, 'security');
-            $downloadSni = $security === 'reality' ? data_get($download, 'realitySettings.serverName')
-                : ($security === 'tls' ? data_get($download, 'tlsSettings.serverName') : null);
-            $inner['downloadTargetHost'] = $address;
-            $inner['downloadTargetPort'] = (string)data_get($download, 'port', 443);
-            $inner['downloadServerName'] = in_array($security, ['tls', 'reality'], true)
-                ? self::xhttpHost($downloadSni, $address) : '';
-            $inner['downloadHTTPHost'] = self::xhttpHost(
-                data_get($download, 'xhttpSettings.host'), $downloadSni, $address
-            );
-        }
-        // Advanced download fields still need a verified native schema.
+
         if ($inner !== []) {
-            $params[''] = $inner;
+            $params[''] = (object)$inner;
         }
         return $params;
     }
