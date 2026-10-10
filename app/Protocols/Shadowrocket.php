@@ -8,6 +8,11 @@ use App\Models\Server;
 
 class Shadowrocket extends AbstractProtocol
 {
+    // Template-only policy. false matches the tested France23 configuration.
+    // Set true to forward all supplied XHTTP request headers unchanged.
+    // This is not a new Xray/Clash/General configuration field.
+    private const XHTTP_FORWARD_EXTRA_HEADERS = true;
+
     public $flags = ['shadowrocket'];
     public $allowedProtocols = [
         Server::TYPE_SHADOWSOCKS,
@@ -388,7 +393,7 @@ class Shadowrocket extends AbstractProtocol
             : ($tlsMode === 1 ? data_get($protocolSettings, 'tls_settings.server_name') : null);
         $params = ['Host' => self::xhttpHost(data_get($settings, 'host'), $headerHost, $sni, $server['host'])];
         foreach ($headers as $name => $value) {
-            if (strcasecmp((string)$name, 'Host') !== 0) {
+            if (self::XHTTP_FORWARD_EXTRA_HEADERS && strcasecmp((string)$name, 'Host') !== 0) {
                 // Keep user-supplied values, including "chrome" and empty strings, unchanged.
                 $params[$name] = $value;
             }
@@ -433,7 +438,47 @@ class Shadowrocket extends AbstractProtocol
 
         if (array_key_exists('downloadSettings', $extra) && $extra['downloadSettings'] !== null) {
             $download = self::xhttpObject($extra['downloadSettings'], 'XHTTP downloadSettings');
-            // No invented download headers/XMUX/ALPN keys: preserve their original structure.
+            $downloadHeaderHost = null;
+            if (array_key_exists('xhttpSettings', $download) && $download['xhttpSettings'] !== null) {
+                $downXhttp = self::xhttpObject($download['xhttpSettings'], 'downloadSettings.xhttpSettings');
+                $downExtra = self::xhttpExtra($downXhttp);
+                if (array_key_exists('headers', $downExtra) && $downExtra['headers'] !== null) {
+                    $downHeaders = self::xhttpObject($downExtra['headers'], 'downloadSettings.xhttpSettings.headers');
+                    $keptHeaders = [];
+                    foreach ($downHeaders as $name => $value) {
+                        $name = (string)$name;
+                        if (!preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D', $name)
+                            || !is_string($value) || strpbrk($value, "\r\n") !== false) {
+                            throw new \InvalidArgumentException('XHTTP download headers must use valid names and string values without CR/LF.');
+                        }
+                        if (strcasecmp($name, 'Host') === 0) {
+                            if ($downloadHeaderHost !== null) {
+                                throw new \InvalidArgumentException('XHTTP download headers contain duplicate Host names.');
+                            }
+                            $downloadHeaderHost = $value;
+                            $keptHeaders[$name] = $value;
+                        }
+                    }
+                    if (!self::XHTTP_FORWARD_EXTRA_HEADERS) {
+                        // Preserve transport Host; omit only optional request headers.
+                        if ($keptHeaders === []) {
+                            unset($downExtra['headers']);
+                        } else {
+                            $downExtra['headers'] = (object)$keptHeaders;
+                        }
+                        if (array_key_exists('extra', $downXhttp)) {
+                            $downXhttp['extra'] = (object)$downExtra;
+                        } else {
+                            unset($downXhttp['headers']);
+                            if ($keptHeaders !== []) {
+                                $downXhttp['headers'] = (object)$keptHeaders;
+                            }
+                        }
+                        $download['xhttpSettings'] = (object)$downXhttp;
+                    }
+                }
+            }
+            // Preserve all remaining download options, including unknown future keys.
             $inner['downloadSettings'] = (object)$download;
             $address = data_get($download, 'address');
             if (is_string($address) && $address !== '') {
@@ -444,7 +489,7 @@ class Shadowrocket extends AbstractProtocol
                 $inner['downloadTargetPort'] = self::xhttpNativeString(data_get($download, 'port', 443), 'downloadSettings.port');
                 $inner['downloadServerName'] = in_array($security, ['tls', 'reality'], true)
                     ? self::xhttpHost($downloadSni, $address) : '';
-                $inner['downloadHTTPHost'] = self::xhttpHost(data_get($download, 'xhttpSettings.host'), $downloadSni, $address);
+                $inner['downloadHTTPHost'] = self::xhttpHost(data_get($download, 'xhttpSettings.host'), $downloadHeaderHost, $downloadSni, $address);
             }
         }
 
