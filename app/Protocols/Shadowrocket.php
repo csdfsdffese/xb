@@ -11,7 +11,7 @@ class Shadowrocket extends AbstractProtocol
     // Template-only policy. false matches the tested France23 configuration.
     // Set true to forward all supplied XHTTP request headers unchanged.
     // This is not a new Xray/Clash/General configuration field.
-    private const XHTTP_FORWARD_EXTRA_HEADERS = true;
+    private const XHTTP_FORWARD_EXTRA_HEADERS = false;
 
     public $flags = ['shadowrocket'];
     public $allowedProtocols = [
