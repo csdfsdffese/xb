@@ -175,7 +175,7 @@ class Shadowrocket extends AbstractProtocol
         $protocol_settings = $server['protocol_settings'];
 
         // xhttp 节点开启加密时：明文 userinfo + type=xhttp + encryption 下发 enc（Shadowrocket 明文格式靠 type 识别 xhttp 传输并读取 encryption），
-        // 同时沿用私有 obfs/obfsParam 下发已有映射的传输参数。
+        // 同时保留私有 obfs/obfsParam 等参数，保证 xhttp 高级参数（下载分离等）不丢失。
         $enc = null;
         if (data_get($protocol_settings, 'network') === 'xhttp'
             && data_get($protocol_settings, 'encryption.enabled')
@@ -279,17 +279,84 @@ class Shadowrocket extends AbstractProtocol
                     $config['type'] = 'xhttp';
                     $config['encryption'] = $enc;
                 }
-                $settings = data_get($protocol_settings, 'network_settings') ?? [];
-                if ($path = data_get($settings, 'path')) {
+                $host = data_get($protocol_settings, 'network_settings.host', $server['host']);
+                if ($path = data_get($protocol_settings, 'network_settings.path')) {
                     $config['path'] = $path;
                 }
-                if ($mode = data_get($settings, 'mode', 'auto')) {
+                if ($mode = data_get($protocol_settings, 'network_settings.mode', 'auto')) {
                     $config['mode'] = $mode;
                 }
-                $config['obfsParam'] = json_encode(
-                    self::buildXhttpParameters($settings, $protocol_settings, $server),
-                    JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
-                );
+            
+                // 处理 xhttp 参数
+                $extra = data_get($protocol_settings, 'network_settings.extra');
+                if (is_array($extra)) {
+                    $inner = [];
+
+                    // 1. xmux 参数
+                    if (!empty($extra['xmux'])) {
+                        $xmux = $extra['xmux'];
+                        if (isset($xmux['maxConcurrency'])) {
+                            $inner['maxConcurrency'] = (string)$xmux['maxConcurrency'];
+                        }
+                        if (isset($xmux['maxConnections'])) {
+                            $val = $xmux['maxConnections'];
+                            $inner['maxConnections'] = is_string($val) ? $val : "{$val}-{$val}";
+                        }
+                        if (isset($xmux['cMaxReuseTimes'])) {
+                            $val = $xmux['cMaxReuseTimes'];
+                            $inner['cMaxReuseTimes'] = is_string($val) ? $val : "{$val}-{$val}";
+                        }
+                        if (isset($xmux['hMaxRequestTimes'])) {
+                            $inner['hMaxRequestTimes'] = (string)$xmux['hMaxRequestTimes'];
+                        }
+                        if (isset($xmux['hMaxReusableSecs'])) {
+                            $inner['hMaxReusableSecs'] = (string)$xmux['hMaxReusableSecs'];
+                        }
+                        if (isset($xmux['hKeepAlivePeriod'])) {
+                            $inner['hKeepAlivePeriod'] = (string)$xmux['hKeepAlivePeriod'];
+                        }
+                    }
+
+                    // 2. XPadding 参数
+                    $inner['noGRPCHeader'] = isset($extra['noGRPCHeader']) ? (bool)$extra['noGRPCHeader'] : false;
+                    $inner['xPaddingBytes'] = $extra['xPaddingBytes'] ?? '100-1000';
+                    $inner['xPaddingObfsMode'] = isset($extra['xPaddingObfsMode']) ? (bool)$extra['xPaddingObfsMode'] : false;
+                    $inner['xPaddingKey'] = $extra['xPaddingKey'] ?? 'x_padding';
+                    $inner['xPaddingHeader'] = $extra['xPaddingHeader'] ?? 'Referer';
+                    $inner['xPaddingPlacement'] = $extra['xPaddingPlacement'] ?? 'queryInHeader';
+                    $inner['xPaddingMethod'] = $extra['xPaddingMethod'] ?? 'repeat-x';
+
+                    // 3. 上行参数
+                    $inner['uplinkHTTPMethod'] = $extra['uplinkHTTPMethod'] ?? 'POST';
+                    $inner['uplinkDataPlacement'] = $extra['uplinkDataPlacement'] ?? 'body';
+                    $inner['uplinkDataKey'] = $extra['uplinkDataKey'] ?? '';
+                    $inner['uplinkChunkSize'] = isset($extra['uplinkChunkSize']) ? (string)$extra['uplinkChunkSize'] : '0';
+
+                    // 4. 会话参数
+                    $inner['sessionPlacement'] = $extra['sessionPlacement'] ?? 'path';
+                    $inner['sessionKey'] = $extra['sessionKey'] ?? '';
+                    $inner['seqPlacement'] = $extra['seqPlacement'] ?? 'path';
+                    $inner['seqKey'] = $extra['seqKey'] ?? '';
+
+                    // 5. packet-up 参数
+                    $inner['scMaxEachPostBytes'] = isset($extra['scMaxEachPostBytes']) ? (string)$extra['scMaxEachPostBytes'] : '1000000';
+                    $inner['scMinPostsIntervalMs'] = isset($extra['scMinPostsIntervalMs']) ? (string)$extra['scMinPostsIntervalMs'] : '30';
+
+                    // 6. 下行分离参数
+                    if (!empty($extra['downloadSettings'])) {
+                        $ds = $extra['downloadSettings'];
+                        $inner['downloadTargetHost'] = data_get($ds, 'address', '');
+                        $inner['downloadTargetPort'] = (string)data_get($ds, 'port', '443');
+                        $inner['downloadServerName'] = data_get($ds, 'realitySettings.serverName') ?? data_get($ds, 'tlsSettings.serverName', '');
+                        $inner['downloadHTTPHost'] = $inner['downloadServerName'];
+                    }
+
+                    // 7. 生成 obfsParam - 所有参数在 "" 嵌套里，Host 在外层
+                    $config['obfsParam'] = json_encode([
+                        'Host' => data_get($protocol_settings, 'tls_settings.server_name') ?? $host,
+                        '' => $inner
+                    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                }
                 break;
         }
 
@@ -297,181 +364,6 @@ class Shadowrocket extends AbstractProtocol
         $uri = "vless" . "://{$userinfo}?{$query}";
         $uri .= "\r\n";
         return $uri;
-    }
-
-    private static function xhttpExtra(array $settings): array
-    {
-        if (!array_key_exists('extra', $settings)) {
-            return $settings;
-        }
-        if ($settings['extra'] === null) {
-            return [];
-        }
-        if (!is_array($settings['extra'])) {
-            throw new \InvalidArgumentException('XHTTP extra must be an object.');
-        }
-        // Xray extra replaces advanced root fields; host/path/mode stay at the root.
-        return $settings['extra'];
-    }
-
-    private static function xhttpHost(...$candidates): string
-    {
-        foreach ($candidates as $candidate) {
-            if (is_string($candidate) && $candidate !== '') {
-                return $candidate;
-            }
-        }
-        return '';
-    }
-
-    private static function xhttpSessionTable(string $table): string
-    {
-        // Xray predefined names are case-sensitive; Shadowrocket receives the alphabet.
-        $predefined = [
-            'ALPHABET' => 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-            'Alphabet' => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
-            'BASE36' => '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-            'Base62' => '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
-            'HEX' => '0123456789ABCDEF',
-            'alphabet' => 'abcdefghijklmnopqrstuvwxyz',
-            'base36' => '0123456789abcdefghijklmnopqrstuvwxyz',
-            'hex' => '0123456789abcdef',
-            'number' => '0123456789',
-        ];
-        return $predefined[$table] ?? $table;
-    }
-
-    private static function shadowrocketTokenishPadding($range)
-    {
-        // Explicit compatibility profile for the observed Base62 raw-character generator.
-        // The source range must describe the server's accepted HPACK byte range.
-        if ((!is_int($range) && !is_string($range))
-            || !preg_match('/^(0|[1-9][0-9]*)(?:-(0|[1-9][0-9]*))?$/D', (string)$range, $match)) {
-            throw new \InvalidArgumentException('Shadowrocket tokenish compatibility requires a non-negative integer or L-U padding range.');
-        }
-        $limits = ['options' => ['min_range' => 0, 'max_range' => 2147483647]];
-        $lower = filter_var($match[1], FILTER_VALIDATE_INT, $limits);
-        $upper = filter_var($match[2] ?? $match[1], FILTER_VALIDATE_INT, $limits);
-        if ($lower === false || $upper === false || $lower > $upper) {
-            throw new \InvalidArgumentException('Shadowrocket tokenish compatibility requires an ordered int32 padding range.');
-        }
-        if ($lower === 0 && $upper === 0) {
-            // Keep the explicit default sentinel; 0-0 does not mean padding is disabled.
-            return $range;
-        }
-        // Every Base62 character uses 5..8 HPACK Huffman bits. Do not depend on tolerance.
-        $safeLower = intdiv($lower * 8 + 4, 5);
-        if ($safeLower > $upper) {
-            throw new \InvalidArgumentException('This padding range is too narrow for the conservative Shadowrocket tokenish compatibility profile; change the server/client profile explicitly.');
-        }
-        return "{$safeLower}-{$upper}";
-    }
-
-    private static function buildXhttpParameters(array $settings, array $protocolSettings, array $server): array
-    {
-        $extra = self::xhttpExtra($settings);
-        $mode = data_get($settings, 'mode') ?: 'auto';
-        $packet = in_array($mode, ['auto', 'packet-up'], true);
-        $stream = in_array($mode, ['auto', 'stream-up', 'stream-one'], true);
-        $session = in_array($mode, ['auto', 'packet-up', 'stream-up'], true);
-        $tlsMode = (int)data_get($protocolSettings, 'tls');
-        $sni = $tlsMode === 2 ? data_get($protocolSettings, 'reality_settings.server_name')
-            : ($tlsMode === 1 ? data_get($protocolSettings, 'tls_settings.server_name') : null);
-        $params = ['Host' => self::xhttpHost(data_get($settings, 'host'), $sni, $server['host'])];
-
-        // Root obfsParam entries are HTTP headers; the empty key is reserved for native options.
-        $headers = data_get($extra, 'headers') ?? [];
-        if (!is_array($headers)) {
-            throw new \InvalidArgumentException('XHTTP headers must be an object.');
-        }
-        foreach ($headers as $name => $value) {
-            if (!is_string($name) || !preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D', $name)
-                || strcasecmp($name, 'Host') === 0 || !is_string($value)
-                || strpbrk($value, "\r\n") !== false) {
-                throw new \InvalidArgumentException('XHTTP headers must use valid names and string values; set Host with xhttpSettings.host.');
-            }
-            $params[$name] = $value;
-        }
-
-        $inner = [];
-        foreach (['xPaddingBytes', 'xPaddingKey', 'xPaddingHeader', 'xPaddingPlacement', 'xPaddingMethod', 'uplinkHTTPMethod'] as $key) {
-            if (isset($extra[$key])) {
-                $inner[$key] = $extra[$key];
-            }
-        }
-        if (isset($extra['xPaddingObfsMode'])) {
-            $inner['xPaddingObfsMode'] = (bool)$extra['xPaddingObfsMode'];
-        }
-        if (array_key_exists('shadowrocketTokenishCompat', $extra)) {
-            if (!is_bool($extra['shadowrocketTokenishCompat'])) {
-                throw new \InvalidArgumentException('shadowrocketTokenishCompat must be a boolean.');
-            }
-            if ($extra['shadowrocketTokenishCompat']) {
-                if (($inner['xPaddingMethod'] ?? null) !== 'tokenish'
-                    || ($inner['xPaddingObfsMode'] ?? false) !== true
-                    || !array_key_exists('xPaddingBytes', $inner)) {
-                    throw new \InvalidArgumentException('Shadowrocket tokenish compatibility requires tokenish, xPaddingObfsMode=true, and an explicit server padding range.');
-                }
-                $inner['xPaddingBytes'] = self::shadowrocketTokenishPadding($inner['xPaddingBytes']);
-            }
-        }
-        if ($stream && isset($extra['noGRPCHeader'])) {
-            $inner['noGRPCHeader'] = (bool)$extra['noGRPCHeader'];
-        }
-        if ($session) {
-            foreach (['sessionPlacement' => 'sessionIDPlacement', 'sessionKey' => 'sessionIDKey'] as $output => $canonical) {
-                if (isset($extra[$canonical]) || isset($extra[$output])) {
-                    $inner[$output] = $extra[$canonical] ?? $extra[$output];
-                }
-            }
-            foreach (['sessionTable' => 'sessionIDTable', 'sessionLength' => 'sessionIDLength'] as $output => $canonical) {
-                $source = array_key_exists($canonical, $extra) ? $canonical : $output;
-                if (isset($extra[$source])) {
-                    $value = (string)$extra[$source];
-                    $inner[$output] = $output === 'sessionTable' && $source === $canonical
-                        ? self::xhttpSessionTable($value) : $value;
-                }
-            }
-        }
-        if ($packet) {
-            foreach (['seqPlacement', 'seqKey', 'uplinkDataPlacement', 'uplinkDataKey'] as $key) {
-                if (isset($extra[$key])) {
-                    $inner[$key] = $extra[$key];
-                }
-            }
-            foreach (['uplinkChunkSize', 'scMaxEachPostBytes', 'scMinPostsIntervalMs'] as $key) {
-                if (isset($extra[$key])) {
-                    $inner[$key] = (string)$extra[$key];
-                }
-            }
-        }
-        $xmux = data_get($extra, 'xmux') ?? [];
-        foreach (['maxConcurrency', 'maxConnections', 'cMaxReuseTimes', 'hMaxRequestTimes', 'hMaxReusableSecs', 'hKeepAlivePeriod'] as $key) {
-            if (isset($xmux[$key])) {
-                $value = $xmux[$key];
-                // Preserve the existing Shadowrocket representation, including explicit zero ranges.
-                $inner[$key] = in_array($key, ['maxConnections', 'cMaxReuseTimes'], true) && !is_string($value)
-                    ? "{$value}-{$value}" : (string)$value;
-            }
-        }
-        if ($session && ($download = data_get($extra, 'downloadSettings'))) {
-            $address = data_get($download, 'address', '');
-            $security = data_get($download, 'security');
-            $downloadSni = $security === 'reality' ? data_get($download, 'realitySettings.serverName')
-                : ($security === 'tls' ? data_get($download, 'tlsSettings.serverName') : null);
-            $inner['downloadTargetHost'] = $address;
-            $inner['downloadTargetPort'] = (string)data_get($download, 'port', 443);
-            $inner['downloadServerName'] = in_array($security, ['tls', 'reality'], true)
-                ? self::xhttpHost($downloadSni, $address) : '';
-            $inner['downloadHTTPHost'] = self::xhttpHost(
-                data_get($download, 'xhttpSettings.host'), $downloadSni, $address
-            );
-        }
-        // Advanced download fields still need a verified native schema.
-        if ($inner !== []) {
-            $params[''] = $inner;
-        }
-        return $params;
     }
 
     public static function buildTrojan($password, $server)
