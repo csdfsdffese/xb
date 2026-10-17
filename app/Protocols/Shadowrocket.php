@@ -8,11 +8,6 @@ use App\Models\Server;
 
 class Shadowrocket extends AbstractProtocol
 {
-    // Template-only policy. false matches the tested France23 configuration.
-    // Set true to forward all supplied XHTTP request headers unchanged.
-    // This is not a new Xray/Clash/General configuration field.
-    private const XHTTP_FORWARD_EXTRA_HEADERS = false;
-
     public $flags = ['shadowrocket'];
     public $allowedProtocols = [
         Server::TYPE_SHADOWSOCKS,
@@ -393,16 +388,16 @@ class Shadowrocket extends AbstractProtocol
             : ($tlsMode === 1 ? data_get($protocolSettings, 'tls_settings.server_name') : null);
         $params = ['Host' => self::xhttpHost(data_get($settings, 'host'), $headerHost, $sni, $server['host'])];
         foreach ($headers as $name => $value) {
-            if (self::XHTTP_FORWARD_EXTRA_HEADERS && strcasecmp((string)$name, 'Host') !== 0) {
-                // Keep user-supplied values, including "chrome" and empty strings, unchanged.
+            if (strcasecmp((string)$name, 'Host') !== 0) {
+                // Map every supplied header to the native header container without rewriting it.
                 $params[$name] = $value;
             }
         }
 
-        // Keep every advanced option, including future keys and complete nested downloadSettings.
+        // Keep every advanced value unchanged, including padding ranges and future keys.
         // Preservation is not a claim that the client's runtime understands each option.
         $inner = $extra;
-        unset($inner['headers']);
+        unset($inner['headers']); // Headers are mapped to the native outer container above.
 
         // Add verified native aliases without discarding the original canonical fields.
         foreach (['sessionPlacement' => 'sessionIDPlacement', 'sessionKey' => 'sessionIDKey',
@@ -444,7 +439,6 @@ class Shadowrocket extends AbstractProtocol
                 $downExtra = self::xhttpExtra($downXhttp);
                 if (array_key_exists('headers', $downExtra) && $downExtra['headers'] !== null) {
                     $downHeaders = self::xhttpObject($downExtra['headers'], 'downloadSettings.xhttpSettings.headers');
-                    $keptHeaders = [];
                     foreach ($downHeaders as $name => $value) {
                         $name = (string)$name;
                         if (!preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D', $name)
@@ -456,26 +450,9 @@ class Shadowrocket extends AbstractProtocol
                                 throw new \InvalidArgumentException('XHTTP download headers contain duplicate Host names.');
                             }
                             $downloadHeaderHost = $value;
-                            $keptHeaders[$name] = $value;
                         }
                     }
-                    if (!self::XHTTP_FORWARD_EXTRA_HEADERS) {
-                        // Preserve transport Host; omit only optional request headers.
-                        if ($keptHeaders === []) {
-                            unset($downExtra['headers']);
-                        } else {
-                            $downExtra['headers'] = (object)$keptHeaders;
-                        }
-                        if (array_key_exists('extra', $downXhttp)) {
-                            $downXhttp['extra'] = (object)$downExtra;
-                        } else {
-                            unset($downXhttp['headers']);
-                            if ($keptHeaders !== []) {
-                                $downXhttp['headers'] = (object)$keptHeaders;
-                            }
-                        }
-                        $download['xhttpSettings'] = (object)$downXhttp;
-                    }
+                    // Keep the complete original download headers in their original container.
                 }
             }
             // Preserve all remaining download options, including unknown future keys.
